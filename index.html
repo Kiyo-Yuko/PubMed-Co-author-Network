@@ -507,8 +507,11 @@ function render(graph){
         run();
       }
     });
-    network.once("stabilizationIterationsDone", () =>
-      network.fit({ animation: { duration: 600, easingFunction: "easeInOutQuad" } }));
+    network.once("stabilizationIterationsDone", () => {
+      network.fit({ animation: { duration: 600, easingFunction: "easeInOutQuad" } });
+      // Freeze the layout once stable so nodes don't keep drifting
+      network.setOptions({ physics: { enabled: false } });
+    });
   } else {
     const newNodeIds = new Set(visNodes.map(n => n.id));
     const newEdgeIds = new Set(visEdges.map(e => e.id));
@@ -516,9 +519,13 @@ function render(graph){
     networkData.nodes.remove(networkData.nodes.getIds().filter(id => !newNodeIds.has(id)));
     networkData.nodes.update(visNodes);
     networkData.edges.update(visEdges);
+    // Re-enable physics for the new layout, stabilize, then freeze again
+    network.setOptions({ physics: { enabled: true } });
     network.stabilize(200);
-    network.once("stabilizationIterationsDone", () =>
-      network.fit({ animation: { duration: 700, easingFunction: "easeInOutQuad" } }));
+    network.once("stabilizationIterationsDone", () => {
+      network.fit({ animation: { duration: 700, easingFunction: "easeInOutQuad" } });
+      network.setOptions({ physics: { enabled: false } });
+    });
   }
 }
 
