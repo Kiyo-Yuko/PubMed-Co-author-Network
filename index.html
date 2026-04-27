@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Co-authorship Graph — PubMed</title>
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+  :root{
+    --bg:#0e1525; --panel:#141d33; --border:#223257;
+    --fg:#dde4f0; --muted:#8aa0c7;
+    --accent:#4f9cf9; --accent2:#a78bfa; --danger:#f87171; --ok:#4ade80;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px}
+  a{color:var(--accent)}
+  header{padding:14px 18px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px;color:var(--accent);font-weight:600}
+  main{display:grid;grid-template-columns:1fr 360px;gap:0;height:calc(100vh - 53px)}
+  @media (max-width:900px){ main{grid-template-columns:1fr;height:auto} }
+  .graph-wrap{position:relative;border-right:1px solid var(--border)}
+  #network{position:absolute;inset:0}
+  @media (max-width:900px){ .graph-wrap{height:60vh} #network{position:relative;height:60vh} }
+  aside{padding:14px;overflow:auto;background:var(--panel);display:flex;flex-direction:column;gap:14px}
+  .controls{display:grid;grid-template-columns:1fr;gap:8px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  label{display:block;font-size:11px;color:var(--muted);margin-bottom:3px;letter-spacing:.04em;text-transform:uppercase}
+  input,button{font-family:inherit;font-size:13px;padding:8px 10px;border-radius:6px;
+    border:1px solid var(--border);background:#0b1122;color:var(--fg);width:100%}
+  input:focus{outline:none;border-color:var(--accent)}
+  button{background:var(--accent);color:#0b1122;border-color:var(--accent);font-weight:600;cursor:pointer}
+  button:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .status{min-height:18px;font-size:12px;color:var(--muted);white-space:pre-wrap}
+  .status.err{color:var(--danger)}
+  .status.ok{color:var(--ok)}
+  .summary{border-collapse:collapse;width:100%;font-size:12px}
+  .summary th,.summary td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--border)}
+  .summary th{color:var(--muted);font-weight:500}
+  .summary tr.pick{cursor:pointer}
+  .summary tr.pick:hover td{background:#1a2546}
+  .summary tr.active td{background:#1a2546}
+  .detail h3{margin:4px 0;font-size:13px;color:var(--accent2)}
+  .detail ol{margin:6px 0 0 18px;padding:0;max-height:300px;overflow-y:auto}
+  .detail li{margin-bottom:4px;line-height:1.3;font-size:11px}
+  .small{font-size:11px;color:var(--muted)}
+  .chip{display:inline-block;padding:2px 8px;border-radius:999px;
+    background:#1a2546;border:1px solid var(--border);color:var(--muted);font-size:11px}
+  .legend{font-size:11px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+  .legend .sw{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:3px}
+  .hint{font-size:11px;color:var(--muted);margin-top:4px;font-style:italic}
+  #network{transition:opacity .35s ease}
+  .graph-wrap.loading #network{opacity:.35;filter:blur(1px)}
+  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    pointer-events:none;opacity:0;transition:opacity .25s ease;z-index:10}
+  .graph-wrap.loading .overlay{opacity:1}
+  .spinner{width:34px;height:34px;border:2px solid rgba(255,255,255,.12);
+    border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .overlay-label{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);
+    font-size:12px;color:var(--muted);background:rgba(14,21,37,.82);
+    border:1px solid var(--border);border-radius:999px;padding:4px 12px;white-space:nowrap}
+  .empty-hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    color:var(--muted);font-size:13px;text-align:center;padding:24px;line-height:1.6}
+</style>
+</head>
+<body>
+<header>
+  <h1>Co-authorship Network</h1>
+  <span class="chip">PubMed · NCBI E-utilities</span>
+</header>
+<main>
+  <div class="graph-wrap" id="graphWrap">
+    <div id="network"></div>
+    <div class="empty-hint" id="emptyHint">
+      Enter an author name on the right and press <b style="color:var(--accent);margin:0 4px">Search PubMed</b> to begin.
+    </div>
+    <div class="overlay" aria-hidden="true">
+      <div class="spinner"></div>
+      <div class="overlay-label" id="overlayLabel">Loading…</div>
+    </div>
+  </div>
+  <aside>
+    <div class="controls">
+      <div>
+        <label for="author1">Author 1</label>
+        <input id="author1" type="text" value="Anthony Fauci" placeholder="Required">
+      </div>
+      <div>
+        <label for="author2">Author 2 (optional)</label>
+        <input id="author2" type="text" placeholder="Leave blank for single author">
+      </div>
+      <div class="row">
+        <div>
+          <label for="maxPapers">Max papers</label>
+          <input id="maxPapers" type="number" min="1" max="10000" value="500">
+        </div>
+        <div>
+          <label for="maxCoauthors">Max co-authors</label>
+          <input id="maxCoauthors" type="number" min="5" max="500" value="80">
+        </div>
+      </div>
+      <div>
+        <label for="apiKey">NCBI API key (optional)</label>
+        <input id="apiKey" type="password" placeholder="Leave blank for slower rate">
+      </div>
+      <button id="go">Search PubMed</button>
+    </div>
+    <div id="status" class="status"></div>
+    <div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <h3 style="margin:0;font-size:13px;color:var(--accent)">Top co-authors</h3>
+        <span id="countChip" class="small"></span>
+      </div>
+      <table class="summary"><thead>
+        <tr><th>#</th><th>Co-author</th><th style="text-align:right">Papers</th></tr>
+      </thead><tbody id="summaryBody"></tbody></table>
+      <div class="hint">Click a co-author to re-center the graph on them.</div>
+      <div class="legend">
+        <span><span class="sw" style="background:#4f9cf9"></span>Author 1 node</span>
+        <span><span class="sw" style="background:#a78bfa"></span>Author 2 node</span>
+        <span><span class="sw" style="background:#dde4f0"></span>Co-author node</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:24px;height:3px;background:#4f9cf9;vertical-align:middle"></span>Author 1 line</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:24px;height:3px;background:#a78bfa;vertical-align:middle"></span>Author 2 line</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:24px;height:3px;background:#4ade80;vertical-align:middle"></span>Shared line</span>
+      </div>
+    </div>
+    <div class="detail" id="detail"></div>
+  </aside>
+</main>
+<script>
+const EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
+const TOOL = "coauthorship_graph_web";
+const $ = id => document.getElementById(id);
+const setStatus = (msg, kind="") => {
+  const el = $("status");
+  el.textContent = msg || "";
+  el.className = "status" + (kind ? " " + kind : "");
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// XSS-safe DOM builder
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'style') Object.assign(node.style, v);
+    else if (k === 'className') node.className = v;
+    else node.setAttribute(k, v);
+  }
+  for (const child of children) {
+    if (child == null) continue;
+    node.append(typeof child === 'string' ? document.createTextNode(child) : child);
+  }
+  return node;
+}
+
+function commonParams(apiKey){
+  const p = new URLSearchParams({tool: TOOL});
+  if (apiKey) p.set("api_key", apiKey);
+  return p;
+}
+
+// Retry with exponential back-off; treats HTTP 429 as retryable
+async function withRetry(fn, attempts = 3, baseMs = 600) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fn();
+      if (res.status === 429) {
+        if (i === attempts - 1) throw new Error("Rate limited (HTTP 429). Add an NCBI API key for higher limits.");
+        const wait = baseMs * (2 ** i);
+        setStatus(`Rate limited — retrying in ${wait/1000}s…`);
+        await sleep(wait);
+        continue;
+      }
+      return res;
+    } catch(e) {
+      if (i === attempts - 1) throw e;
+      await sleep(baseMs * (2 ** i));
+    }
+  }
+}
+
+async function esearchAuthor(name, retmax, apiKey){
+  const p = commonParams(apiKey);
+  p.set("db","pubmed");
+  // Accept either "Randall Johnson" or "Johnson Randall" — query both orderings
+  const tokens = name.trim().split(/\s+/);
+  let term;
+  if (tokens.length >= 2) {
+    const reversed = [...tokens].reverse().join(" ");
+    term = `${name}[Author] OR ${reversed}[Author]`;
+  } else {
+    term = `${name}[Author]`;
+  }
+  p.set("term", term);
+  p.set("retmax", retmax);
+  p.set("retmode","json");
+  p.set("sort","pub_date");
+  const res = await withRetry(() => fetch(`${EUTILS}/esearch.fcgi?${p}`));
+  if (!res.ok) throw new Error(`ESearch HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.esearchresult?.ERROR) throw new Error(data.esearchresult.ERROR);
+  return {
+    pmids: data.esearchresult?.idlist || [],
+    total: parseInt(data.esearchresult?.count || "0", 10)
+  };
+}
+
+async function efetchArticles(pmids, apiKey, onProgress){
+  const CHUNK = 150;
+  const chunks = [];
+  for (let i=0;i<pmids.length;i+=CHUNK) chunks.push(pmids.slice(i,i+CHUNK));
+  const gap = apiKey ? 120 : 360;
+  const articles = [];
+  for (let i=0;i<chunks.length;i++){
+    const body = commonParams(apiKey);
+    body.set("db","pubmed");
+    body.set("id", chunks[i].join(","));
+    body.set("retmode","xml");
+    const res = await withRetry(() => fetch(`${EUTILS}/efetch.fcgi`, {
+      method:"POST",
+      headers:{"Content-Type":"application/x-www-form-urlencoded"},
+      body: body.toString()
+    }));
+    if (!res.ok) throw new Error(`EFetch HTTP ${res.status}`);
+    const xmlText = await res.text();
+    articles.push(...parseArticles(xmlText));
+    onProgress?.(articles.length, pmids.length);
+    if (i < chunks.length - 1) await sleep(gap);
+  }
+  return articles;
+}
+
+function parseArticles(xmlText){
+  const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+  if (doc.querySelector("parsererror")) throw new Error("Malformed XML");
+  const out = [];
+  doc.querySelectorAll("PubmedArticle").forEach(a => {
+    const pmid = a.querySelector("PMID")?.textContent || "";
+    const title = (a.querySelector("ArticleTitle")?.textContent || "").trim();
+    let year = a.querySelector("PubDate > Year")?.textContent;
+    if (!year) year = (a.querySelector("PubDate > MedlineDate")?.textContent || "").slice(0,4);
+    const authors = [...a.querySelectorAll("AuthorList > Author")].map(an => ({
+      last: (an.querySelector("LastName")?.textContent || "").trim(),
+      fore: (an.querySelector("ForeName")?.textContent || "").trim(),
+      init: (an.querySelector("Initials")?.textContent || "").trim(),
+      coll: (an.querySelector("CollectiveName")?.textContent || "").trim()
+    }));
+    out.push({pmid, title, year: parseInt(year)||0, authors});
+  });
+  return out;
+}
+
+// Use full forename to prevent "Smith J" collisions
+function authorKey(au){
+  if (au.coll) return "C:" + au.coll.toLowerCase();
+  const last = au.last.toLowerCase();
+  if (!last) return null;
+  const name = au.fore
+    ? au.fore.toLowerCase().replace(/\s+/g, "_")
+    : (au.init || "").toLowerCase();
+  return `${last}|${name}`;
+}
+
+function displayName(au){
+  if (au.coll) return au.coll;
+  if (au.fore && au.last) return `${au.fore} ${au.last}`;
+  if (au.init && au.last) return `${au.last} ${au.init}`;
+  return au.last || "";
+}
+
+function matchesCenterOnce(au, c){
+  const full = `${au.fore} ${au.last}`.toLowerCase().trim();
+  if (full === c) return true;
+  const parts = c.split(/\s+/);
+  if (parts.length < 2) return false;
+  const lastIn = parts[parts.length-1];
+  const firstIn = parts[0];
+  if (au.last.toLowerCase() !== lastIn) return false;
+  if (au.fore && au.fore.toLowerCase().startsWith(firstIn)) return true;
+  if (au.init && au.init[0]?.toLowerCase() === firstIn[0]) return true;
+  return false;
+}
+
+// Accept either "Randall Johnson" or "Johnson Randall"
+function matchesCenter(au, centerName){
+  const c = centerName.trim().toLowerCase();
+  if (matchesCenterOnce(au, c)) return true;
+  const tokens = c.split(/\s+/);
+  if (tokens.length >= 2){
+    const reversed = [...tokens].reverse().join(" ");
+    if (reversed !== c && matchesCenterOnce(au, reversed)) return true;
+  }
+  return false;
+}
+
+function buildAuthorGraph(papers, centerNames, topN){
+  const centerNameList = Array.isArray(centerNames) ? centerNames : [centerNames];
+  const centerNameList_filtered = centerNameList.filter(n => n.trim());
+  const reg = new Map();
+  const pairs = new Map();
+  const centerKeys = new Set();
+  for (const p of papers){
+    const orderedKeys = [];
+    const seen = new Map();
+    for (const au of p.authors){
+      const k = authorKey(au);
+      if (!k) continue;
+      if (!seen.has(k)){
+        seen.set(k, displayName(au));
+        orderedKeys.push(k);
+      }
+      for (const cname of centerNameList_filtered){
+        if (matchesCenter(au, cname)) centerKeys.add(k);
+      }
+      if (!reg.has(k)) reg.set(k, {name: displayName(au), papers: [], titles: [], years: []});
+      const r = reg.get(k);
+      if (!r.papers.includes(p.pmid)){
+        r.papers.push(p.pmid);
+        r.titles.push(p.title);
+        r.years.push(p.year);
+      }
+      // Keep the longest display name we've seen for this author
+      if (displayName(au).length > r.name.length) r.name = displayName(au);
+    }
+    const firstKey = orderedKeys[0];
+    const lastKey = orderedKeys[orderedKeys.length - 1];
+    const keys = [...seen.keys()];
+    for (let i=0;i<keys.length;i++){
+      for (let j=i+1;j<keys.length;j++){
+        const [a,b] = [keys[i], keys[j]].sort();
+        const pk = `${a}||${b}`;
+        const rec = pairs.get(pk) || {count:0, firstAuthorCount:0, lastAuthorCount:0};
+        rec.count += 1;
+        if (keys[i] === firstKey || keys[i] === lastKey) rec.firstAuthorCount += 1;
+        if (keys[j] === firstKey || keys[j] === lastKey) rec.lastAuthorCount += 1;
+        pairs.set(pk, rec);
+      }
+    }
+  }
+  if (centerKeys.size === 0){
+    throw new Error(`Authors not found in PubMed papers. Try full names like "Anthony S Fauci"`);
+  }
+  const sortedCenterKeys = [...centerKeys].sort((a,b) =>
+    (reg.get(b).papers.length) - (reg.get(a).papers.length)
+  );
+  const centerKey1 = sortedCenterKeys[0];
+  const centerKey2 = sortedCenterKeys[1] || null;
+  const centerKeys2Use = centerKey2 ? new Set([centerKey1, centerKey2]) : new Set([centerKey1]);
+  const coauthorStats = new Map();
+  for (const [pk, rec] of pairs){
+    const [a,b] = pk.split("||");
+    let otherKey = null;
+    if (centerKeys2Use.has(a) && centerKeys2Use.has(b)) continue;
+    if (centerKeys2Use.has(a)){ otherKey = b; }
+    else if (centerKeys2Use.has(b)){ otherKey = a; }
+    if (otherKey){
+      if (!coauthorStats.has(otherKey)){
+        coauthorStats.set(otherKey, {shared: 0, firstAuthorLink: false, lastAuthorLink: false});
+      }
+      const stats = coauthorStats.get(otherKey);
+      stats.shared += rec.count;
+      if (rec.firstAuthorCount > 0) stats.firstAuthorLink = true;
+      if (rec.lastAuthorCount > 0) stats.lastAuthorLink = true;
+    }
+  }
+  const rankedCo = [...coauthorStats.entries()]
+    .sort((x,y) => y[1].shared - x[1].shared)
+    .slice(0, topN)
+    .map(([k, s]) => ({
+      key: k, shared: s.shared, name: reg.get(k).name,
+      isFirstAuthor: s.firstAuthorLink, isLastAuthor: s.lastAuthorLink
+    }));
+  const keep = new Set([...centerKeys2Use, ...rankedCo.map(r => r.key)]);
+  const nodes = [];
+  for (const k of keep){
+    const info = reg.get(k);
+    const isCenter = centerKeys2Use.has(k);
+    nodes.push({key: k, isCenter, name: info.name, papersCount: info.papers.length, titles: info.titles, years: info.years});
+  }
+  const edges = [];
+  for (const [pk, rec] of pairs){
+    const [a,b] = pk.split("||");
+    if (keep.has(a) && keep.has(b)){
+      let fromCenter = null;
+      if (centerKeys2Use.has(a) && !centerKeys2Use.has(b))
+        fromCenter = (a === centerKey1) ? "center1" : "center2";
+      else if (centerKeys2Use.has(b) && !centerKeys2Use.has(a))
+        fromCenter = (b === centerKey1) ? "center1" : "center2";
+      else if (centerKeys2Use.has(a) && centerKeys2Use.has(b))
+        fromCenter = "both";
+      edges.push({a, b, count: rec.count, fromCenter});
+    }
+  }
+  return {
+    nodes, edges, centerKey: centerKey1, centerKey2,
+    centerDisplay: reg.get(centerKey1).name,
+    centerDisplay2: centerKey2 ? reg.get(centerKey2).name : null,
+    topCoauthors: rankedCo
+  };
+}
+
+let network = null, networkData = null, nodesById = new Map(), currentGraph = null;
+
+function buildVisData(graph){
+  const maxPapers = Math.max(1, ...graph.nodes.map(n => n.papersCount));
+  const visNodes = graph.nodes.map(n => {
+    // Dot size = total papers for this person (not just shared)
+    const tSize = n.papersCount / maxPapers;
+    const isCenter = graph.centerKey === n.key || graph.centerKey2 === n.key;
+    const color = isCenter
+      ? { background:"#4f9cf9", border:"rgba(255,255,255,0.7)", highlight:{background:"#7bbfff", border:"#ffffff"} }
+      : { background: `hsl(270, ${30 + tSize*40}%, ${50 + tSize*10}%)`, border: "rgba(167,139,250,0.4)", highlight:{background:"#c4b5fd", border:"#a78bfa"} };
+    // Build tooltip as a DOM element so titles can't break out via HTML injection
+    const sortedTitles = n.titles
+      .map((t, i) => ({title: t, year: n.years[i]}))
+      .sort((a, b) => (b.year || 0) - (a.year || 0));
+    const tooltip = document.createElement("div");
+    tooltip.style.cssText = "max-width:420px;line-height:1.7;font-family:ui-monospace,monospace;font-size:12px;padding:4px 2px";
+    const header = document.createElement("div");
+    const nameB = document.createElement("b");
+    nameB.style.fontSize = "13px";
+    nameB.textContent = n.name;
+    const countSpan = document.createElement("span");
+    countSpan.style.cssText = "color:#8aa0c7;margin-left:8px";
+    countSpan.textContent = `${n.papersCount} papers`;
+    header.append(nameB, countSpan);
+    const hr = document.createElement("hr");
+    hr.style.cssText = "border:none;border-top:1px solid #223257;margin:5px 0";
+    const scroll = document.createElement("div");
+    scroll.style.cssText = "max-height:320px;overflow-y:auto";
+    sortedTitles.forEach(({title, year}) => {
+      const row = document.createElement("div");
+      row.textContent = `${year ? `(${year})` : "(----)"}  ${title}`;
+      scroll.appendChild(row);
+    });
+    tooltip.append(header, hr, scroll);
+    return {
+      id: n.key,
+      label: n.name,
+      value: 15 + tSize * 45,
+      color,
+      font:{color:"#dde4f0", size: isCenter ? 14 : 11, face:"monospace"},
+      title: tooltip
+    };
+  });
+  const maxStrength = Math.max(1, ...graph.edges.map(e => e.count));
+  const visEdges = graph.edges.map((e,i) => {
+    const t = e.count / maxStrength;
+    let color, width;
+    if (e.fromCenter === "center1") {
+      color = `rgba(79,156,249,${(0.3 + t*0.7).toFixed(2)})`;   // blue
+      width = 0.8 + t * 5;
+    } else if (e.fromCenter === "center2") {
+      color = `rgba(167,139,250,${(0.3 + t*0.7).toFixed(2)})`;  // purple
+      width = 0.8 + t * 5;
+    } else if (e.fromCenter === "both") {
+      color = `rgba(74,222,128,${(0.5 + t*0.5).toFixed(2)})`;   // green
+      width = 1.5 + t * 6;
+    } else {
+      color = `rgba(140,160,200,${(0.1 + t*0.3).toFixed(2)})`;  // gray (coauthor↔coauthor)
+      width = 0.3 + t * 2;
+    }
+    return {
+      id: `e${i}`,
+      from: e.a, to: e.b,
+      value: 1 + t * 10,
+      width: width,
+      color: { color, highlight: "rgba(255,255,255,0.9)", hover: "rgba(255,255,255,0.8)" },
+      title: `${e.count} paper${e.count>1?"s":""}`
+    };
+  });
+  return { visNodes, visEdges };
+}
+
+const NET_OPTIONS = {
+  nodes:{ shape:"dot", scaling:{ min:8, max:60 } },
+  edges:{ smooth:{ enabled:true, type:"continuous", roundness:0.2 }, scaling:{ min:0.5, max:8 } },
+  physics:{
+    solver:"forceAtlas2Based",
+    forceAtlas2Based:{ gravitationalConstant:-50, centralGravity:0.01, springLength:130, springConstant:0.04, damping:0.5, avoidOverlap:0.7 },
+    stabilization:{ enabled:true, iterations:300, updateInterval:25 }
+  },
+  interaction:{ hover:true, tooltipDelay:80, navigationButtons:true, keyboard:true, zoomView:true, dragNodes:true }
+};
+
+function render(graph){
+  currentGraph = graph;
+  const hint = $("emptyHint");
+  if (hint) hint.style.display = "none";
+  nodesById = new Map(graph.nodes.map(n => [n.key, n]));
+  const { visNodes, visEdges } = buildVisData(graph);
+  if (!network){
+    networkData = { nodes: new vis.DataSet(visNodes), edges: new vis.DataSet(visEdges) };
+    network = new vis.Network($("network"), networkData, NET_OPTIONS);
+    network.on("selectNode", params => {
+      const id = params.nodes[0];
+      const node = nodesById.get(id);
+      if (!node || !currentGraph) return;
+      if (currentGraph.centerKey === node.key || currentGraph.centerKey2 === node.key){
+        showDetail(node);
+      } else {
+        $("author1").value = node.name;
+        $("author2").value = "";
+        run();
+      }
+    });
+    network.once("stabilizationIterationsDone", () =>
+      network.fit({ animation: { duration: 600, easingFunction: "easeInOutQuad" } }));
+  } else {
+    const newNodeIds = new Set(visNodes.map(n => n.id));
+    const newEdgeIds = new Set(visEdges.map(e => e.id));
+    networkData.edges.remove(networkData.edges.getIds().filter(id => !newEdgeIds.has(id)));
+    networkData.nodes.remove(networkData.nodes.getIds().filter(id => !newNodeIds.has(id)));
+    networkData.nodes.update(visNodes);
+    networkData.edges.update(visEdges);
+    network.stabilize(200);
+    network.once("stabilizationIterationsDone", () =>
+      network.fit({ animation: { duration: 700, easingFunction: "easeInOutQuad" } }));
+  }
+}
+
+function renderSummary(graph){
+  const tb = $("summaryBody");
+  tb.replaceChildren();
+  graph.topCoauthors.forEach((c, i) => {
+    const tr = document.createElement("tr");
+    tr.className = "pick";
+    tr.title = `Click to search for ${c.name}`;
+    const tdNum = document.createElement("td");
+    tdNum.textContent = i + 1;
+    const tdName = document.createElement("td");
+    tdName.textContent = c.name;
+    if (c.isFirstAuthor) {
+      const badge = el("span", {style:{color:"#fbbf24",marginLeft:"4px"}}, " 1st");
+      tdName.append(badge);
+    } else if (c.isLastAuthor) {
+      const badge = el("span", {style:{color:"#ec4899",marginLeft:"4px"}}, " last");
+      tdName.append(badge);
+    }
+    const tdCount = document.createElement("td");
+    tdCount.style.textAlign = "right";
+    tdCount.textContent = c.shared;
+    tr.append(tdNum, tdName, tdCount);
+    // Click on the row → re-search with this author as Author 1
+    tr.addEventListener("click", () => {
+      $("author1").value = c.name;
+      $("author2").value = "";
+      run();
+    });
+    tb.appendChild(tr);
+  });
+  $("countChip").textContent = `${graph.nodes.length} nodes · ${graph.edges.length} edges`;
+}
+
+function showDetail(node){
+  const sortedTitles = node.titles
+    .map((t, i) => ({title: t, year: node.years[i]}))
+    .sort((a, b) => (b.year || 0) - (a.year || 0));
+  const detail = $("detail");
+  detail.replaceChildren();
+  const h3 = document.createElement("h3");
+  h3.textContent = node.name;
+  const sub = document.createElement("div");
+  sub.className = "small";
+  sub.textContent = `${node.papersCount} papers in set`;
+  const ol = document.createElement("ol");
+  sortedTitles.slice(0, 30).forEach(({title, year}) => {
+    const li = document.createElement("li");
+    li.textContent = year ? `(${year}) ${title}` : title;
+    ol.appendChild(li);
+  });
+  detail.append(h3, sub, ol);
+  if (node.titles.length > 30) {
+    const more = document.createElement("div");
+    more.className = "small";
+    more.textContent = `… and ${node.titles.length - 30} more`;
+    detail.appendChild(more);
+  }
+}
+
+async function run(){
+  const name1 = $("author1").value.trim();
+  const name2 = $("author2").value.trim();
+  const names = name2 ? [name1, name2] : name1;
+  if (!name1){ setStatus("Enter Author 1", "err"); return; }
+  const maxPapers = Math.max(1, parseInt($("maxPapers").value||"500", 10));
+  const maxCoauthors = Math.max(5, parseInt($("maxCoauthors").value||"80", 10));
+  const apiKey = $("apiKey").value.trim();
+  $("go").disabled = true;
+  setStatus(`Searching for ${name2 ? name1 + " & " + name2 : name1}…`);
+  setLoading(true, "Fetching papers…");
+  try{
+    const authorsToFetch = name2 ? [name1, name2] : [name1];
+    // Fetch PMIDs for all authors first, then dedupe before efetch
+    const pmidSets = await Promise.all(
+      authorsToFetch.map(a => esearchAuthor(a, maxPapers, apiKey))
+    );
+    for (const {pmids} of pmidSets) {
+      if (!pmids.length) throw new Error(`No papers found. Check the author name.`);
+    }
+    const uniquePmids = [...new Set(pmidSets.flatMap(r => r.pmids))];
+    setStatus(`Fetching ${uniquePmids.length} unique papers…`);
+    const allPapers = await efetchArticles(uniquePmids, apiKey, (done, tot) => {
+      setStatus(`Fetching ${done}/${tot}…`);
+    });
+    setStatus("Building graph…");
+    const graph = buildAuthorGraph(allPapers, names, maxCoauthors);
+    render(graph);
+    renderSummary(graph);
+    const centerNode = graph.nodes.find(n => n.key === graph.centerKey);
+    if (centerNode) showDetail(centerNode);
+    const desc = name2 ? `${graph.centerDisplay} & ${graph.centerDisplay2}` : graph.centerDisplay;
+    setStatus(`✓ ${allPapers.length} papers · Center: ${desc}`, "ok");
+  } catch(err){
+    setStatus(`Error: ${err.message}`, "err");
+  } finally {
+    setLoading(false);
+    $("go").disabled = false;
+  }
+}
+
+function setLoading(on, label){
+  const wrap = $("graphWrap");
+  if (!wrap) return;
+  wrap.classList.toggle("loading", !!on);
+  if (label) $("overlayLabel").textContent = label;
+}
+
+$("go").addEventListener("click", () => run());
+[$("author1"), $("author2")].forEach(input => {
+  input.addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+});
+// Auto-run on load is intentionally disabled — user triggers via the button or Enter key.
+</script>
+</body>
+</html>
